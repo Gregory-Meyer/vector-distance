@@ -165,7 +165,7 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
-static float horizontal_sum(__m256 x);
+static float avx_horizontal_sum(__m256 x);
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
   __m256 squared_distances = _mm256_setzero_ps();
@@ -191,7 +191,7 @@ static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
     __m256i mask = _mm256_setzero_si256();
 
     for (size_t i = 0; i < 8 - (k % 8); ++i) {
-      ((uint32_t *)&mask)[7 - i] = 0xffffffff;
+      ((uint32_t *)&mask)[i] = 0xffffffff;
     }
 
     const __m256 v_elems = _mm256_maskload_ps(v_load_ptr, mask);
@@ -202,30 +202,24 @@ static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
     squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
   }
 
-  return sqrtf(horizontal_sum(squared_distances));
+  return sqrtf(avx_horizontal_sum(squared_distances));
 }
 
-static float horizontal_sum(__m256 x) {
-  // https://stackoverflow.com/questions/13219146/how-to-sum-m256-horizontally/13222410#13222410
+static float sse_horizontal_sum(__m128 v);
 
-  // hiQuad = ( x7, x6, x5, x4 )
-  const __m128 hiQuad = _mm256_extractf128_ps(x, 1);
-  // loQuad = ( x3, x2, x1, x0 )
-  const __m128 loQuad = _mm256_castps256_ps128(x);
-  // sumQuad = ( x3 + x7, x2 + x6, x1 + x5, x0 + x4 )
-  const __m128 sumQuad = _mm_add_ps(loQuad, hiQuad);
-  // loDual = ( -, -, x1 + x5, x0 + x4 )
-  const __m128 loDual = sumQuad;
-  // hiDual = ( -, -, x3 + x7, x2 + x6 )
-  const __m128 hiDual = _mm_movehl_ps(sumQuad, sumQuad);
-  // sumDual = ( -, -, x1 + x3 + x5 + x7, x0 + x2 + x4 + x6 )
-  const __m128 sumDual = _mm_add_ps(loDual, hiDual);
-  // lo = ( -, -, -, x0 + x2 + x4 + x6 )
-  const __m128 lo = sumDual;
-  // hi = ( -, -, -, x1 + x3 + x5 + x7 )
-  const __m128 hi = _mm_shuffle_ps(sumDual, sumDual, 0x1);
-  // sum = ( -, -, -, x0 + x1 + x2 + x3 + x4 + x5 + x6 + x7 )
-  const __m128 sum = _mm_add_ss(lo, hi);
+static float avx_horizontal_sum(__m256 v) {
+  __m128 vlow = _mm256_castps256_ps128(v);
+  __m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
+  vlow = _mm_add_ps(vlow, vhigh);             // add the low 128
+  return sse_horizontal_sum(
+      vlow); // and inline the sse3 version, which is optimal for AVX
+             // (no wasted instructions, and all of them are the 4B minimum)
+}
 
-  return _mm_cvtss_f32(sum);
+static float sse_horizontal_sum(__m128 v) {
+  __m128 shuf = _mm_movehdup_ps(v); // broadcast elements 3,1 to 2,0
+  __m128 sums = _mm_add_ps(v, shuf);
+  shuf = _mm_movehl_ps(shuf, sums); // high half -> low half
+  sums = _mm_add_ss(sums, shuf);
+  return _mm_cvtss_f32(sums);
 }
