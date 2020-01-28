@@ -10,15 +10,13 @@
 
 #include <pcg_variants.h>
 
-#define X_OFFSET 0
-#define Y_OFFSET 0
-
 #define AVX_SIZE sizeof(__m256)
 #define AVX_NUM_SINGLES (sizeof(__m256) / sizeof(float))
 
 static void fill_random(pcg32_random_t *rng, size_t n, size_t m, float X[n][m]);
 static void vector_distances(size_t n, size_t m, size_t k, const float X[n][k],
-                             const float Y[m][k], float Z[restrict n][m]);
+                             const float Y[m][k], float Z[restrict n][m],
+                             float xn[restrict n], float yn[restrict m]);
 static void print_matrix(size_t n, size_t m, const float A[n][m]);
 
 int main(int argc, const char *const argv[argc]) {
@@ -63,7 +61,7 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  float *X = aligned_alloc(AVX_SIZE, (n * k + X_OFFSET) * sizeof(float));
+  float *const X = aligned_alloc(AVX_SIZE, n * k * sizeof(float));
 
   if (!X) {
     fprintf(stderr, "error: couldn't allocate memory for X (%zu x %zu)\n", n,
@@ -72,12 +70,10 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  X += X_OFFSET;
-
-  float *Y = aligned_alloc(AVX_SIZE, (m * k + Y_OFFSET) * sizeof(float));
+  float *const Y = aligned_alloc(AVX_SIZE, m * k * sizeof(float));
 
   if (!Y) {
-    free(X - X_OFFSET);
+    free(X);
 
     fprintf(stderr, "error: couldn't allocate memory for Y (%zu x %zu)\n", m,
             k);
@@ -85,19 +81,20 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  Y += Y_OFFSET;
-
   float *const Z = malloc(n * m * sizeof(float));
 
   if (!Z) {
-    free(Y - Y_OFFSET);
-    free(X - X_OFFSET);
+    free(Y);
+    free(X);
 
     fprintf(stderr, "error: couldn't allocate memory for Z (%zu x %zu)\n", n,
             m);
 
     return EXIT_FAILURE;
   }
+
+  float *const xn = malloc(n * sizeof(float));
+  float *const yn = malloc(m * sizeof(float));
 
   pcg32_random_t rng = PCG32_INITIALIZER;
   fill_random(&rng, n, k, (float(*)[])X);
@@ -110,14 +107,14 @@ int main(int argc, const char *const argv[argc]) {
   print_matrix(m, k, (const float(*)[])Y);
 
   vector_distances(n, m, k, (const float(*)[])X, (const float(*)[])Y,
-                   (float(*)[])Z);
+                   (float(*)[])Z, xn, yn);
 
   puts("Z =");
   print_matrix(n, m, (const float(*)[])Z);
 
   free(Z);
-  free(Y - Y_OFFSET);
-  free(X - X_OFFSET);
+  free(Y);
+  free(X);
 }
 
 static void fill_random(pcg32_random_t *rng, size_t n, size_t m,
@@ -139,15 +136,26 @@ static void fill_random(pcg32_random_t *rng, size_t n, size_t m,
   }
 }
 
-static float euclidean_distance(size_t k, const float v[k], const float u[k]);
+static float euclidean_distance2(size_t k, const float v[k], const float u[k],
+                                 float vn, float un);
+static void squared_norms(size_t n, size_t k, const float X[n][k],
+                          float xn[restrict n]);
 
 static void vector_distances(size_t n, size_t m, size_t k, const float X[n][k],
-                             const float Y[m][k], float Z[restrict n][m]) {
+                             const float Y[m][k], float Z[restrict n][m],
+                             float xn[restrict n], float yn[restrict m]) {
+  squared_norms(n, k, X, xn);
+  squared_norms(m, k, Y, yn);
+
   for (size_t i = 0; i < n; ++i) {
     for (size_t j = i; j < m; ++j) {
-      const float distance = euclidean_distance(k, X[i], Y[j]);
+      const float distance2 = euclidean_distance2(k, X[i], Y[j], xn[i], yn[j]);
 
-      Z[i][j] = Z[j][i] = distance;
+      if (distance2 <= 0.0f) {
+        Z[i][j] = Z[j][i] = 0.0f;
+      } else {
+        Z[i][j] = Z[j][i] = sqrtf(distance2);
+      }
     }
   }
 }
@@ -176,56 +184,44 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
-static float avx_horizontal_sum(__m256 x);
-static __m256i loadn_mask(size_t n);
+static float squared_norm(size_t k, const float x[k]);
+static __m256i maskn(size_t n);
 
-static float euclidean_distance_unaligned(size_t k, const float v[k],
-                                          const float u[k]);
-static float euclidean_distance_aligned(size_t k, const float v[k],
-                                        const float u[k],
-                                        __m256 squared_distances);
+static void squared_norms(size_t n, size_t k, const float X[n][k],
+                          float xn[restrict n]) {
+  const size_t num_vector_stores = n / AVX_NUM_SINGLES;
 
-static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
-  const uintptr_t v_offset = (uintptr_t)v % AVX_SIZE;
-  const uintptr_t u_offset = (uintptr_t)u % AVX_SIZE;
+  for (size_t i = 0; i < num_vector_stores; ++i) {
+    __m256 to_store;
 
-  if (v_offset == u_offset) {
-    __m256 squared_distances;
-
-    if (v_offset != 0) {
-      size_t num_to_load = (AVX_SIZE - v_offset) / sizeof(float);
-
-      if (num_to_load > k) {
-        num_to_load = k;
-      }
-
-      const __m256i mask = loadn_mask(num_to_load);
-
-      const __m256 v_elems = _mm256_maskload_ps(v, mask);
-      const __m256 u_elems = _mm256_maskload_ps(u, mask);
-
-      const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
-      squared_distances = _mm256_mul_ps(offsets, offsets);
-
-      k -= num_to_load;
-      v += num_to_load;
-      u += num_to_load;
-    } else {
-      squared_distances = _mm256_setzero_ps();
+    for (size_t j = 0; j < AVX_NUM_SINGLES; ++j) {
+      to_store[j] = squared_norm(k, X[j]);
     }
 
-    return euclidean_distance_aligned(k, v, u, squared_distances);
-  } else {
-    return euclidean_distance_unaligned(k, v, u);
+    _mm256_storeu_ps(xn, to_store);
+
+    n -= AVX_NUM_SINGLES;
+    X += AVX_NUM_SINGLES;
+    xn += AVX_NUM_SINGLES;
+  }
+
+  if (n > 0) {
+    __m256 to_store = _mm256_setzero_ps();
+
+    for (size_t i = 0; i < n; ++i) {
+      to_store[i] = squared_norm(k, X[i]);
+    }
+
+    _mm256_maskstore_ps(xn, maskn(n), to_store);
   }
 }
 
-static float euclidean_distance_unaligned(size_t k, const float v[k],
-                                          const float u[k]) {
-  assert((uintptr_t)v % AVX_SIZE != 0 || (uintptr_t)u % AVX_SIZE != 0);
+static float avx_horizontal_sum(__m256 x);
 
+static float euclidean_distance2(size_t k, const float v[k], const float u[k],
+                                 float vn, float un) {
   const size_t num_vector_loads = k / (sizeof(__m256) / sizeof(float));
-  __m256 squared_distances = _mm256_setzero_ps();
+  __m256 inner_product_accumulator = _mm256_setzero_ps();
 
   for (size_t i = 0; i < num_vector_loads; ++i) {
     const __m256 v_elems = _mm256_loadu_ps(v);
@@ -235,61 +231,54 @@ static float euclidean_distance_unaligned(size_t k, const float v[k],
     v += AVX_NUM_SINGLES;
     u += AVX_NUM_SINGLES;
 
-    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
-    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
-    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+    const __m256 inner_product_elems = _mm256_mul_ps(v_elems, u_elems);
+    inner_product_accumulator =
+        _mm256_add_ps(inner_product_accumulator, inner_product_elems);
   }
 
   if (k > 0) {
-    const __m256i mask = loadn_mask(k);
+    const __m256i mask = maskn(k);
 
     const __m256 v_elems = _mm256_maskload_ps(v, mask);
     const __m256 u_elems = _mm256_maskload_ps(u, mask);
 
-    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
-    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
-    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+    const __m256 inner_product_elems = _mm256_mul_ps(v_elems, u_elems);
+    inner_product_accumulator =
+        _mm256_add_ps(inner_product_accumulator, inner_product_elems);
   }
 
-  return sqrtf(avx_horizontal_sum(squared_distances));
+  const float inner_product = avx_horizontal_sum(inner_product_accumulator);
+
+  return vn + un - 2.0f * inner_product;
 }
 
-static float euclidean_distance_aligned(size_t k, const float v[k],
-                                        const float u[k],
-                                        __m256 squared_distances) {
-  assert((uintptr_t)v % AVX_SIZE == 0);
-  assert((uintptr_t)u % AVX_SIZE == 0);
-
+static float squared_norm(size_t k, const float x[k]) {
   const size_t num_vector_loads = k / AVX_NUM_SINGLES;
+  __m256 norm_components = _mm256_setzero_ps();
 
   for (size_t i = 0; i < num_vector_loads; ++i) {
-    const __m256 v_elems = _mm256_load_ps(v);
-    const __m256 u_elems = _mm256_load_ps(u);
+    const __m256 elems = _mm256_loadu_ps(x);
 
     k -= AVX_NUM_SINGLES;
-    v += AVX_NUM_SINGLES;
-    u += AVX_NUM_SINGLES;
+    x += AVX_NUM_SINGLES;
 
-    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
-    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
-    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+    const __m256 squared = _mm256_mul_ps(elems, elems);
+    norm_components = _mm256_add_ps(norm_components, squared);
   }
 
   if (k > 0) {
-    const __m256i mask = loadn_mask(k);
+    const __m256i mask = maskn(k);
 
-    const __m256 v_elems = _mm256_maskload_ps(v, mask);
-    const __m256 u_elems = _mm256_maskload_ps(u, mask);
+    const __m256 elems = _mm256_maskload_ps(x, mask);
 
-    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
-    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
-    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+    const __m256 squared = _mm256_mul_ps(elems, elems);
+    norm_components = _mm256_add_ps(norm_components, squared);
   }
 
-  return sqrtf(avx_horizontal_sum(squared_distances));
+  return avx_horizontal_sum(norm_components);
 }
 
-static __m256i loadn_mask(size_t n) {
+static __m256i maskn(size_t n) {
   assert(n < 8);
 
   __m256i mask = _mm256_setzero_si256();
