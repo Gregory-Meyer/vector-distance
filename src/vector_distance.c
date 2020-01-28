@@ -165,7 +165,7 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
-static float hsum(__m256 x);
+static float horizontal_sum(__m256 x);
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
   __m256 squared_distances = _mm256_setzero_ps();
@@ -202,10 +202,10 @@ static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
     squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
   }
 
-  return sqrtf(hsum(squared_distances));
+  return sqrtf(horizontal_sum(squared_distances));
 }
 
-static float hsum(__m256 x) {
+static float horizontal_sum(__m256 x) {
   // https://stackoverflow.com/questions/13219146/how-to-sum-m256-horizontally/13222410#13222410
 
   // hiQuad = ( x7, x6, x5, x4 )
