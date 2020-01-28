@@ -165,8 +165,6 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
-static size_t div_towards_infinity(size_t numerator, size_t denominator);
-
 static float hsum(__m256 x);
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
@@ -230,8 +228,4 @@ static float hsum(__m256 x) {
   const __m128 sum = _mm_add_ss(lo, hi);
 
   return _mm_cvtss_f32(sum);
-}
-
-static size_t div_towards_infinity(size_t numerator, size_t denominator) {
-  return (numerator - 1) / (denominator + 1);
 }
