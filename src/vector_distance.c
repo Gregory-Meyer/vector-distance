@@ -9,6 +9,9 @@
 
 #include <pcg_variants.h>
 
+#define X_OFFSET 1
+#define Y_OFFSET 2
+
 static void fill_random(pcg32_random_t *rng, size_t n, size_t m, float X[n][m]);
 static void vector_distances(size_t n, size_t m, size_t k, const float X[n][k],
                              const float Y[m][k], float Z[restrict n][m]);
@@ -56,7 +59,7 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  float *const X = malloc(n * k * sizeof(float));
+  float *X = malloc((n * k + X_OFFSET) * sizeof(float));
 
   if (!X) {
     fprintf(stderr, "error: couldn't allocate memory for X (%zu x %zu)\n", n,
@@ -65,10 +68,12 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  float *const Y = malloc(m * k * sizeof(float));
+  X += X_OFFSET;
+
+  float *Y = malloc((m * k + Y_OFFSET) * sizeof(float));
 
   if (!Y) {
-    free(X);
+    free(X - X_OFFSET);
 
     fprintf(stderr, "error: couldn't allocate memory for Y (%zu x %zu)\n", m,
             k);
@@ -76,11 +81,13 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
+  Y += Y_OFFSET;
+
   float *const Z = malloc(n * m * sizeof(float));
 
   if (!Z) {
-    free(Y);
-    free(X);
+    free(Y - Y_OFFSET);
+    free(X - X_OFFSET);
 
     fprintf(stderr, "error: couldn't allocate memory for Z (%zu x %zu)\n", n,
             m);
@@ -105,8 +112,8 @@ int main(int argc, const char *const argv[argc]) {
   print_matrix(n, m, (const float(*)[])Z);
 
   free(Z);
-  free(Y);
-  free(X);
+  free(Y - Y_OFFSET);
+  free(X - X_OFFSET);
 }
 
 static void fill_random(pcg32_random_t *rng, size_t n, size_t m,
