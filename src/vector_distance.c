@@ -186,7 +186,6 @@ static float euclidean_distance_aligned(size_t k, const float v[k],
                                         __m256 squared_distances);
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
-
   const uintptr_t v_offset = (uintptr_t)v % AVX_SIZE;
   const uintptr_t u_offset = (uintptr_t)u % AVX_SIZE;
 
@@ -194,7 +193,12 @@ static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
     __m256 squared_distances;
 
     if (v_offset != 0) {
-      const size_t num_to_load = (AVX_SIZE - v_offset) / sizeof(float);
+      size_t num_to_load = (AVX_SIZE - v_offset) / sizeof(float);
+
+      if (num_to_load > k) {
+        num_to_load = k;
+      }
+
       const __m256i mask = loadn_mask(num_to_load);
 
       const __m256 v_elems = _mm256_maskload_ps(v, mask);
@@ -289,10 +293,7 @@ static __m256i loadn_mask(size_t n) {
   assert(n < 8);
 
   __m256i mask = _mm256_setzero_si256();
-
-  for (size_t i = 0; i < n; ++i) {
-    ((uint32_t *)&mask)[i] = 0xffffffff;
-  }
+  memset(&mask, 0xff, sizeof(uint32_t) * n);
 
   return mask;
 }
