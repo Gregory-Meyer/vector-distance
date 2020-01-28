@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <float.h>
 #include <math.h>
 #include <stddef.h>
@@ -165,37 +166,73 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
+#define AVX_SIZE sizeof(__m256)
+#define AVX_NUM_SINGLES (sizeof(__m256) / sizeof(float))
+
 static float avx_horizontal_sum(__m256 x);
+static __m256i loadn_mask(size_t n);
+
+static float euclidean_distance_unaligned(size_t k, const float v[k],
+                                          const float u[k]);
+static float euclidean_distance_aligned(size_t k, const float v[k],
+                                        const float u[k],
+                                        __m256 squared_distances);
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
+
+  const uintptr_t v_offset = (uintptr_t)v % AVX_SIZE;
+  const uintptr_t u_offset = (uintptr_t)u % AVX_SIZE;
+
+  if (v_offset == u_offset) {
+    __m256 squared_distances;
+
+    if (v_offset != 0) {
+      const size_t num_to_load = (AVX_SIZE - v_offset) / sizeof(float);
+      const __m256i mask = loadn_mask(num_to_load);
+
+      const __m256 v_elems = _mm256_maskload_ps(v, mask);
+      const __m256 u_elems = _mm256_maskload_ps(u, mask);
+
+      const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
+      squared_distances = _mm256_mul_ps(offsets, offsets);
+
+      k -= num_to_load;
+      v += num_to_load;
+      u += num_to_load;
+    } else {
+      squared_distances = _mm256_setzero_ps();
+    }
+
+    return euclidean_distance_aligned(k, v, u, squared_distances);
+  } else {
+    return euclidean_distance_unaligned(k, v, u);
+  }
+}
+
+static float euclidean_distance_unaligned(size_t k, const float v[k],
+                                          const float u[k]) {
+  assert((uintptr_t)v % AVX_SIZE != 0 || (uintptr_t)u % AVX_SIZE != 0);
+
+  const size_t num_vector_loads = k / (sizeof(__m256) / sizeof(float));
   __m256 squared_distances = _mm256_setzero_ps();
 
-  const size_t num_vector_loads = k / 8;
-
-  const float *v_load_ptr = v;
-  const float *u_load_ptr = u;
-
   for (size_t i = 0; i < num_vector_loads; ++i) {
-    const __m256 v_elems = _mm256_loadu_ps(v_load_ptr);
-    const __m256 u_elems = _mm256_loadu_ps(u_load_ptr);
+    const __m256 v_elems = _mm256_loadu_ps(v);
+    const __m256 u_elems = _mm256_loadu_ps(u);
 
-    v_load_ptr += 8;
-    u_load_ptr += 8;
+    v += AVX_NUM_SINGLES;
+    u += AVX_NUM_SINGLES;
 
     const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
     const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
     squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
   }
 
-  if (k % 8 != 0) {
-    __m256i mask = _mm256_setzero_si256();
+  if (k % AVX_NUM_SINGLES != 0) {
+    const __m256i mask = loadn_mask(AVX_NUM_SINGLES - k);
 
-    for (size_t i = 0; i < 8 - (k % 8); ++i) {
-      ((uint32_t *)&mask)[i] = 0xffffffff;
-    }
-
-    const __m256 v_elems = _mm256_maskload_ps(v_load_ptr, mask);
-    const __m256 u_elems = _mm256_maskload_ps(u_load_ptr, mask);
+    const __m256 v_elems = _mm256_maskload_ps(v, mask);
+    const __m256 u_elems = _mm256_maskload_ps(u, mask);
 
     const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
     const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
@@ -205,12 +242,59 @@ static float euclidean_distance(size_t k, const float v[k], const float u[k]) {
   return sqrtf(avx_horizontal_sum(squared_distances));
 }
 
+static float euclidean_distance_aligned(size_t k, const float v[k],
+                                        const float u[k],
+                                        __m256 squared_distances) {
+  assert((uintptr_t)v % AVX_SIZE == 0);
+  assert((uintptr_t)u % AVX_SIZE == 0);
+
+  const size_t num_vector_loads = k / AVX_NUM_SINGLES;
+
+  for (size_t i = 0; i < num_vector_loads; ++i) {
+    const __m256 v_elems = _mm256_load_ps(v);
+    const __m256 u_elems = _mm256_load_ps(u);
+
+    v += AVX_NUM_SINGLES;
+    u += AVX_NUM_SINGLES;
+
+    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
+    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
+    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+  }
+
+  if (k % 8 != 0) {
+    const __m256i mask = loadn_mask(AVX_NUM_SINGLES - k);
+
+    const __m256 v_elems = _mm256_maskload_ps(v, mask);
+    const __m256 u_elems = _mm256_maskload_ps(u, mask);
+
+    const __m256 offsets = _mm256_sub_ps(v_elems, u_elems);
+    const __m256 squared_offsets = _mm256_mul_ps(offsets, offsets);
+    squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
+  }
+
+  return sqrtf(avx_horizontal_sum(squared_distances));
+}
+
+static __m256i loadn_mask(size_t n) {
+  assert(n < 8);
+
+  __m256i mask = _mm256_setzero_si256();
+
+  for (size_t i = 0; i < n; ++i) {
+    ((uint32_t *)&mask)[i] = 0xffffffff;
+  }
+
+  return mask;
+}
+
 static float sse_horizontal_sum(__m128 v);
 
 static float avx_horizontal_sum(__m256 v) {
   __m128 vlow = _mm256_castps256_ps128(v);
   __m128 vhigh = _mm256_extractf128_ps(v, 1); // high 128
   vlow = _mm_add_ps(vlow, vhigh);             // add the low 128
+
   return sse_horizontal_sum(
       vlow); // and inline the sse3 version, which is optimal for AVX
              // (no wasted instructions, and all of them are the 4B minimum)
