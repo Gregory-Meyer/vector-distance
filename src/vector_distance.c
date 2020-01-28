@@ -10,8 +10,11 @@
 
 #include <pcg_variants.h>
 
-#define X_OFFSET 1
-#define Y_OFFSET 2
+#define X_OFFSET 0
+#define Y_OFFSET 0
+
+#define AVX_SIZE sizeof(__m256)
+#define AVX_NUM_SINGLES (sizeof(__m256) / sizeof(float))
 
 static void fill_random(pcg32_random_t *rng, size_t n, size_t m, float X[n][m]);
 static void vector_distances(size_t n, size_t m, size_t k, const float X[n][k],
@@ -60,7 +63,7 @@ int main(int argc, const char *const argv[argc]) {
     return EXIT_FAILURE;
   }
 
-  float *X = malloc((n * k + X_OFFSET) * sizeof(float));
+  float *X = aligned_alloc(AVX_SIZE, (n * k + X_OFFSET) * sizeof(float));
 
   if (!X) {
     fprintf(stderr, "error: couldn't allocate memory for X (%zu x %zu)\n", n,
@@ -71,7 +74,7 @@ int main(int argc, const char *const argv[argc]) {
 
   X += X_OFFSET;
 
-  float *Y = malloc((m * k + Y_OFFSET) * sizeof(float));
+  float *Y = aligned_alloc(AVX_SIZE, (m * k + Y_OFFSET) * sizeof(float));
 
   if (!Y) {
     free(X - X_OFFSET);
@@ -173,9 +176,6 @@ static void print_matrix(size_t n, size_t m, const float A[n][m]) {
   puts("]");
 }
 
-#define AVX_SIZE sizeof(__m256)
-#define AVX_NUM_SINGLES (sizeof(__m256) / sizeof(float))
-
 static float avx_horizontal_sum(__m256 x);
 static __m256i loadn_mask(size_t n);
 
@@ -227,6 +227,7 @@ static float euclidean_distance_unaligned(size_t k, const float v[k],
     const __m256 v_elems = _mm256_loadu_ps(v);
     const __m256 u_elems = _mm256_loadu_ps(u);
 
+    k -= AVX_NUM_SINGLES;
     v += AVX_NUM_SINGLES;
     u += AVX_NUM_SINGLES;
 
@@ -235,8 +236,8 @@ static float euclidean_distance_unaligned(size_t k, const float v[k],
     squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
   }
 
-  if (k % AVX_NUM_SINGLES != 0) {
-    const __m256i mask = loadn_mask(AVX_NUM_SINGLES - k);
+  if (k > 0) {
+    const __m256i mask = loadn_mask(k);
 
     const __m256 v_elems = _mm256_maskload_ps(v, mask);
     const __m256 u_elems = _mm256_maskload_ps(u, mask);
@@ -261,6 +262,7 @@ static float euclidean_distance_aligned(size_t k, const float v[k],
     const __m256 v_elems = _mm256_load_ps(v);
     const __m256 u_elems = _mm256_load_ps(u);
 
+    k -= AVX_NUM_SINGLES;
     v += AVX_NUM_SINGLES;
     u += AVX_NUM_SINGLES;
 
@@ -269,8 +271,8 @@ static float euclidean_distance_aligned(size_t k, const float v[k],
     squared_distances = _mm256_add_ps(squared_distances, squared_offsets);
   }
 
-  if (k % 8 != 0) {
-    const __m256i mask = loadn_mask(AVX_NUM_SINGLES - k);
+  if (k > 0) {
+    const __m256i mask = loadn_mask(k);
 
     const __m256 v_elems = _mm256_maskload_ps(v, mask);
     const __m256 u_elems = _mm256_maskload_ps(u, mask);
