@@ -231,9 +231,8 @@ static float euclidean_distance2(size_t k, const float v[k], const float u[k],
     v += AVX_NUM_SINGLES;
     u += AVX_NUM_SINGLES;
 
-    const __m256 inner_product_elems = _mm256_mul_ps(v_elems, u_elems);
     inner_product_accumulator =
-        _mm256_add_ps(inner_product_accumulator, inner_product_elems);
+        _mm256_fmadd_ps(v_elems, u_elems, inner_product_accumulator);
   }
 
   if (k > 0) {
@@ -242,14 +241,13 @@ static float euclidean_distance2(size_t k, const float v[k], const float u[k],
     const __m256 v_elems = _mm256_maskload_ps(v, mask);
     const __m256 u_elems = _mm256_maskload_ps(u, mask);
 
-    const __m256 inner_product_elems = _mm256_mul_ps(v_elems, u_elems);
     inner_product_accumulator =
-        _mm256_add_ps(inner_product_accumulator, inner_product_elems);
+        _mm256_fmadd_ps(v_elems, u_elems, inner_product_accumulator);
   }
 
   const float inner_product = avx_horizontal_sum(inner_product_accumulator);
 
-  return vn + un - 2.0f * inner_product;
+  return vn - 2.0f * inner_product + un;
 }
 
 static float squared_norm(size_t k, const float x[k]) {
@@ -262,8 +260,7 @@ static float squared_norm(size_t k, const float x[k]) {
     k -= AVX_NUM_SINGLES;
     x += AVX_NUM_SINGLES;
 
-    const __m256 squared = _mm256_mul_ps(elems, elems);
-    norm_components = _mm256_add_ps(norm_components, squared);
+    norm_components = _mm256_fmadd_ps(elems, elems, norm_components);
   }
 
   if (k > 0) {
@@ -271,8 +268,7 @@ static float squared_norm(size_t k, const float x[k]) {
 
     const __m256 elems = _mm256_maskload_ps(x, mask);
 
-    const __m256 squared = _mm256_mul_ps(elems, elems);
-    norm_components = _mm256_add_ps(norm_components, squared);
+    norm_components = _mm256_fmadd_ps(elems, elems, norm_components);
   }
 
   return avx_horizontal_sum(norm_components);
