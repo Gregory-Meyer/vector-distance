@@ -94,7 +94,29 @@ int main(int argc, const char *const argv[argc]) {
   }
 
   float *const xn = malloc(n * sizeof(float));
+
+  if (!xn) {
+    free(Z);
+    free(Y);
+    free(X);
+
+    fprintf(stderr, "error: couldn't allocate memory for xn (%zu)\n", n);
+
+    return EXIT_FAILURE;
+  }
+
   float *const yn = malloc(m * sizeof(float));
+
+  if (!yn) {
+    free(xn);
+    free(Z);
+    free(Y);
+    free(X);
+
+    fprintf(stderr, "error: couldn't allocate memory for yn (%zu)\n", m);
+
+    return EXIT_FAILURE;
+  }
 
   pcg32_random_t rng = PCG32_INITIALIZER;
   fill_random(&rng, n, k, (float(*)[])X);
@@ -112,6 +134,8 @@ int main(int argc, const char *const argv[argc]) {
   puts("Z =");
   print_matrix(n, m, (const float(*)[])Z);
 
+  free(yn);
+  free(xn);
   free(Z);
   free(Y);
   free(X);
