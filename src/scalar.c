@@ -2,9 +2,8 @@
 
 #include <math.h>
 
-size_t workspace_size(size_t n, size_t m, size_t k) {
+size_t workspace_size(size_t n, size_t k) {
   (void)n;
-  (void)m;
   (void)k;
 
   return 0;
@@ -12,16 +11,17 @@ size_t workspace_size(size_t n, size_t m, size_t k) {
 
 static float euclidean_distance(size_t k, const float v[k], const float u[k]);
 
-void pairwise_euclidean_distance(size_t n, size_t m, size_t k, size_t l,
-                                 const float X[n][k], const float Y[m][k],
-                                 float Z[restrict n][m],
+void pairwise_euclidean_distance(size_t n, size_t k, size_t l,
+                                 const float X[n][k], float Z[restrict n][n],
                                  float workspace[restrict l]) {
   (void)l;
   (void)workspace;
 
   for (size_t i = 0; i < n; ++i) {
-    for (size_t j = 0; j < m; ++j) {
-      const float distance = euclidean_distance(k, X[i], Y[j]);
+    Z[i][i] = 0.0f;
+
+    for (size_t j = i + 1; j < n; ++j) {
+      const float distance = euclidean_distance(k, X[i], X[j]);
 
       Z[i][j] = distance;
       Z[j][i] = distance;

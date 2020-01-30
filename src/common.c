@@ -11,15 +11,12 @@ void fill_with_randomness(pcg32_random_t *rng, size_t n, size_t m,
       FLT_RADIX == 2 && sizeof(float) == sizeof(uint32_t),
       "float must be an IEEE-754 single precision floating point number");
 
-  static const uint32_t ZERO_EXPONENT = 0x3e800000;
-
   for (size_t i = 0; i < n; ++i) {
     for (size_t j = 0; j < m; ++j) {
       const uint32_t randomness = pcg32_random_r(rng);
-      const uint32_t fraction_bits = randomness & ((1 << 24) - 1);
-      const uint32_t as_integer = ZERO_EXPONENT | fraction_bits;
+      const uint32_t fraction_bits = randomness >> 9;
 
-      memcpy(&X[i][j], &as_integer, sizeof(as_integer));
+      X[i][j] = (float)fraction_bits / (float)(1 << 24);
     }
   }
 }

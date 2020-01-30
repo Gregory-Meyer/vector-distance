@@ -1,22 +1,25 @@
 #include <common.h>
 #include <lib.h>
 
+#include <dlfcn.h>
+#include <getopt.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <dlfcn.h>
-
 #include <pcg_variants.h>
 
-typedef size_t(WorkspaceSizeFunction)(size_t, size_t, size_t);
-typedef void(PairwiseEuclideanDistanceFunction)(size_t n, size_t m, size_t k,
-                                                size_t l, const float X[n][k],
-                                                const float Y[m][k],
-                                                float Z[restrict n][m],
+typedef size_t(WorkspaceSizeFunction)(size_t n, size_t k);
+typedef void(PairwiseEuclideanDistanceFunction)(size_t n, size_t k, size_t l,
+                                                const float X[n][k],
+                                                float Z[restrict n][n],
                                                 float workspace[restrict l]);
 
-int main(int argc, const char *const argv[argc]) {
+static const struct option LONG_OPTIONS[] = {{"quiet", no_argument, NULL, 'q'},
+                                             {NULL, 0, NULL, 0}};
+
+int main(int argc, char *argv[argc]) {
   if (argc < 2) {
     fputs("error: missing argument LIB\n", stderr);
 
@@ -26,18 +29,34 @@ int main(int argc, const char *const argv[argc]) {
 
     return EXIT_FAILURE;
   } else if (argc < 4) {
-    fputs("error: missing argument M\n", stderr);
-
-    return EXIT_FAILURE;
-  } else if (argc < 5) {
     fputs("error: missing argument K\n", stderr);
 
     return EXIT_FAILURE;
   }
 
+  bool quiet = false;
+
+  while (true) {
+    const int ch = getopt_long(argc, argv, "q", LONG_OPTIONS, NULL);
+
+    if (ch == -1) {
+      break;
+    }
+
+    switch (ch) {
+    case 'q':
+      quiet = true;
+      break;
+
+    case '?':
+    default:
+      __builtin_unreachable();
+    }
+  }
+
   int errc = EXIT_SUCCESS;
 
-  const char *const library_name = argv[1];
+  const char *const library_name = argv[optind];
   void *const lib = dlopen(library_name, RTLD_NOW);
 
   if (!lib) {
@@ -74,7 +93,7 @@ int main(int argc, const char *const argv[argc]) {
     goto cleanup_lib;
   }
 
-  const char *const n_str = argv[2];
+  const char *const n_str = argv[optind + 1];
   size_t n;
 
   if (sscanf(n_str, "%zu", &n) != 1) {
@@ -84,17 +103,7 @@ int main(int argc, const char *const argv[argc]) {
     goto cleanup_lib;
   }
 
-  const char *const m_str = argv[3];
-  size_t m;
-
-  if (sscanf(m_str, "%zu", &m) != 1) {
-    fprintf(stderr, "error: couldn't parse M (\"%s\") as an integer\n", m_str);
-
-    errc = EXIT_FAILURE;
-    goto cleanup_lib;
-  }
-
-  const char *const k_str = argv[4];
+  const char *const k_str = argv[optind + 2];
   size_t k;
 
   if (sscanf(k_str, "%zu", &k) != 1) {
@@ -114,27 +123,17 @@ int main(int argc, const char *const argv[argc]) {
     goto cleanup_lib;
   }
 
-  float *const Y = malloc(m * k * sizeof(float));
+  float *const Z = malloc(n * n * sizeof(float));
 
-  if (!Y) {
-    fprintf(stderr, "error: couldn't allocate memory for Y (%zu x %zu)\n", m,
-            k);
+  if (!Z) {
+    fprintf(stderr, "error: couldn't allocate memory for Z (%zu x %zu)\n", n,
+            n);
 
     errc = EXIT_FAILURE;
     goto cleanup_X;
   }
 
-  float *const Z = malloc(n * m * sizeof(float));
-
-  if (!Z) {
-    fprintf(stderr, "error: couldn't allocate memory for Z (%zu x %zu)\n", n,
-            m);
-
-    errc = EXIT_FAILURE;
-    goto cleanup_Y;
-  }
-
-  const size_t l = workspace_size_fn(n, m, k);
+  const size_t l = workspace_size_fn(n, k);
 
   float *workspace = NULL;
 
@@ -152,27 +151,24 @@ int main(int argc, const char *const argv[argc]) {
 
   pcg32_random_t rng = PCG32_INITIALIZER;
   fill_with_randomness(&rng, n, k, (float(*)[])X);
-  fill_with_randomness(&rng, m, k, (float(*)[])Y);
 
-  puts("X =");
-  print_matrix(n, k, (const float(*)[])X);
+  if (!quiet) {
+    puts("X =");
+    print_matrix(n, k, (const float(*)[])X);
+  }
 
-  puts("Y =");
-  print_matrix(m, k, (const float(*)[])Y);
+  pairwise_euclidean_distance_fn(n, k, l, (const float(*)[])X, (float(*)[])Z,
+                                 workspace);
 
-  pairwise_euclidean_distance_fn(n, m, k, l, (const float(*)[])X,
-                                 (const float(*)[])Y, (float(*)[])Z, workspace);
-
-  puts("Z =");
-  print_matrix(n, m, (const float(*)[])Z);
+  if (!quiet) {
+    puts("Z =");
+    print_matrix(n, n, (const float(*)[])Z);
+  }
 
   free(workspace);
 
 cleanup_Z:
   free(Z);
-
-cleanup_Y:
-  free(Y);
 
 cleanup_X:
   free(X);

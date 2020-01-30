@@ -85,3 +85,4 @@ _deps
 obj/
 
 # End of https://www.gitignore.io/api/c,cmake,ninja,premake-gmake
+/perf.data

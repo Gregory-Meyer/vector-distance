@@ -10,13 +10,13 @@ COMMON_FLAGS='-pipe -march=native -pedantic -Wall -Wcast-qual -Wconversion -Wext
 case "$1" in
     debug)
         BUILD_TYPE='Debug'
-        C_FLAGS="${COMMON_FLAGS} -O0 -fno-tree-vectorize -g -DDEBUG -march=native"
+        C_FLAGS="${COMMON_FLAGS} -O0 -g -DDEBUG -march=native -fsanitize=address"
         BUILD_DIR='debug'
         ;;
 
     release)
         BUILD_TYPE='Release'
-        C_FLAGS="${COMMON_FLAGS} -O3 -fno-tree-vectorize -DNDEBUG -march=native"
+        C_FLAGS="${COMMON_FLAGS} -O3 -DNDEBUG -march=native"
         BUILD_DIR='release'
         ;;
 
