@@ -15,38 +15,52 @@
 size_t workspace_size(size_t n, size_t k) {
   (void)k;
 
-  return n * n;
+  return n * (n - 1) / 2 + n;
 }
 
-static void upper_triangular_all_pairs_inner_product(size_t n, size_t k,
-                                                     const float X[n][k],
-                                                     float Y[restrict n][n]);
+static void upper_triangular_all_pairs_inner_product(
+    size_t n, size_t k, const float X[n][k], float Y[restrict n * (n - 1) / 2],
+    float D[restrict n]);
 
 void pairwise_euclidean_distance(size_t n, size_t k, size_t p,
                                  const float X[n][k], float Z[restrict n][n],
                                  float workspace[restrict p]) {
   assert(p >= workspace_size(n, k));
 
-  upper_triangular_all_pairs_inner_product(n, k, X, (float(*)[])workspace);
+  const size_t num_triangular_elements = n * (n - 1) / 2;
 
-  for (size_t i = 0; i < n; ++i) {
-    Z[i][i] = 0.0f;
+  float *const inner_products = workspace;
+  float *const squared_distances = workspace + num_triangular_elements;
+  upper_triangular_all_pairs_inner_product(n, k, X, inner_products,
+                                           squared_distances);
 
-    for (size_t j = i + 1; j < n; ++j) {
-      const float squared_distance = workspace[i * n + i] +
-                                     workspace[j * n + j] -
-                                     2.0f * workspace[i * n + j];
+  Z[0][0] = 0.0f;
 
-      float distance;
+  size_t i = 0;
+  size_t j = 1;
+  for (size_t triangular_index = 0; triangular_index < num_triangular_elements;
+       ++triangular_index) {
+    const float squared_distance = squared_distances[i] + squared_distances[j] -
+                                   2.0f * inner_products[triangular_index];
 
-      if (squared_distance <= 0.0f) {
-        distance = 0.0f;
-      } else {
-        distance = sqrtf(squared_distance);
-      }
+    float distance;
 
-      Z[i][j] = distance;
-      Z[j][i] = distance;
+    if (squared_distance <= 0.0f) {
+      distance = 0.0f;
+    } else {
+      distance = sqrtf(squared_distance);
+    }
+
+    Z[i][j] = distance;
+    Z[j][i] = distance;
+
+    if (j == n - 1) {
+      i += 1;
+      j = i + 1;
+
+      Z[i][i] = 0.0f;
+    } else {
+      ++j;
     }
   }
 }
@@ -56,23 +70,27 @@ static float self_inner_product(size_t k, const float v[k], __m256i load_mask);
 static float inner_product(size_t k, const float v[k], const float u[k],
                            __m256i load_mask);
 
-static void upper_triangular_all_pairs_inner_product(size_t n, size_t m,
-                                                     const float X[n][m],
-                                                     float Y[restrict n][n]) {
-  __m256i load_mask;
-  const size_t vector_length_modulo = m % AVX_LENGTH;
+static void upper_triangular_all_pairs_inner_product(
+    size_t n, size_t k, const float X[n][k], float Y[restrict n * (n - 1) / 2],
+    float D[restrict n]) {
+  const size_t num_triangular_elements = n * (n - 1) / 2;
 
-  if (vector_length_modulo == 0) {
-    load_mask = _mm256_setzero_si256();
-  } else {
-    load_mask = maskn(vector_length_modulo);
-  }
+  const __m256i load_mask = maskn(k % AVX_LENGTH);
+  D[0] = self_inner_product(k, X[0], load_mask);
 
-  for (size_t i = 0; i < n; ++i) {
-    Y[i][i] = self_inner_product(m, X[i], load_mask);
+  size_t i = 0;
+  size_t j = 1;
+  for (size_t triangular_index = 0; triangular_index < num_triangular_elements;
+       ++triangular_index) {
+    Y[triangular_index] = inner_product(k, X[i], X[j], load_mask);
 
-    for (size_t j = i + 1; j < n; ++j) {
-      Y[i][j] = inner_product(m, X[i], X[j], load_mask);
+    if (j == n - 1) {
+      i += 1;
+      j = i + 1;
+
+      D[i] = self_inner_product(k, X[i], load_mask);
+    } else {
+      ++j;
     }
   }
 }
