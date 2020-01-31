@@ -16,7 +16,7 @@ case "$1" in
 
     release)
         BUILD_TYPE='Release'
-        C_FLAGS="${COMMON_FLAGS} -O3 -DNDEBUG -march=native"
+        C_FLAGS="${COMMON_FLAGS} -O3 -g -DNDEBUG -march=native"
         BUILD_DIR='release'
         ;;
 
