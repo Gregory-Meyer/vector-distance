@@ -25,9 +25,8 @@ void pairwise_euclidean_distance(size_t n, size_t k, size_t l,
   assert(l >= workspace_size(n, k));
 
   float *const inner_products = workspace;
-  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, (int)n, (int)n, (int)k,
-              1.0f, (const float *)X, (int)k, (const float *)X, (int)k, 0.0f,
-              inner_products, (int)n);
+  cblas_ssyrk(CblasRowMajor, CblasUpper, CblasNoTrans, (int)n, (int)k, 1.0f,
+              (const float *)X, (int)k, 0.0f, inner_products, (int)n);
 
   for (size_t i = 0; i < n; ++i) {
     Z[i][i] = 0.0f;
