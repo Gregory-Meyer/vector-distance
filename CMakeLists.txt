@@ -43,15 +43,15 @@ target_compile_features(avx-trick PUBLIC c_std_11)
 target_include_directories(avx-trick PUBLIC include)
 target_link_libraries(avx-trick PRIVATE m)
 
+add_library(avx-transpose-trick SHARED src/avx_transpose_trick.c)
+target_compile_features(avx-transpose-trick PUBLIC c_std_11)
+target_include_directories(avx-transpose-trick PUBLIC include)
+target_link_libraries(avx-transpose-trick PRIVATE m)
+
 add_library(sgemm SHARED src/sgemm.c)
 target_compile_features(sgemm PUBLIC c_std_11)
 target_include_directories(sgemm PUBLIC include)
 target_link_libraries(sgemm PRIVATE m openblas)
-
-add_library(self-gemm SHARED src/self_gemm.c)
-target_compile_features(self-gemm PUBLIC c_std_11)
-target_include_directories(self-gemm PUBLIC include)
-target_link_libraries(self-gemm PRIVATE m)
 
 add_library(common STATIC src/common.c)
 target_compile_features(common PUBLIC c_std_11)
