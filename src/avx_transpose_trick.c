@@ -125,8 +125,116 @@ static void symmetric_rank_k_update(size_t n, size_t m, const float X[n][m],
       }
     }
 
-    if (k < m) {
-      // TODO: implement
+    if (k + 2 < m) {
+      const __m256 Xik0 = _mm256_set1_ps(X[i][k]);
+      const __m256 Xik1 = _mm256_set1_ps(X[i][k + 1]);
+      const __m256 Xik2 = _mm256_set1_ps(X[i][k + 2]);
+
+      const float *XT_row_ptr_0 = &XT[k][i + 1];
+      const float *XT_row_ptr_1 = &XT[k + 1][i + 1];
+      const float *XT_row_ptr_2 = &XT[k + 2][i + 1];
+
+      float *XXT_row_ptr = &XXT[i][i + 1];
+      size_t j_remaining = (n - (i + 1));
+
+      for (; j_remaining >= AVX_LENGTH;
+           j_remaining -= AVX_LENGTH, XT_row_ptr_0 += AVX_LENGTH,
+           XT_row_ptr_1 += AVX_LENGTH, XT_row_ptr_2 += AVX_LENGTH,
+           XXT_row_ptr += AVX_LENGTH) {
+        const __m256 XXTij = _mm256_loadu_ps(XXT_row_ptr);
+
+        const __m256 XTkj0 = _mm256_loadu_ps(XT_row_ptr_0);
+        const __m256 XTkj1 = _mm256_loadu_ps(XT_row_ptr_1);
+        const __m256 XTkj2 = _mm256_loadu_ps(XT_row_ptr_2);
+
+        const __m256 tmp0 = _mm256_fmadd_ps(Xik0, XTkj0, XXTij);
+        const __m256 tmp1 = _mm256_fmadd_ps(Xik1, XTkj1, tmp0);
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik2, XTkj2, tmp1);
+
+        _mm256_storeu_ps(XXT_row_ptr, XXTij_new);
+      }
+
+      if (j_remaining > 0) {
+        const __m256i mask = maskn(j_remaining);
+
+        const __m256 XXTij = _mm256_maskload_ps(XXT_row_ptr, mask);
+
+        const __m256 XTkj0 = _mm256_maskload_ps(XT_row_ptr_0, mask);
+        const __m256 XTkj1 = _mm256_maskload_ps(XT_row_ptr_1, mask);
+        const __m256 XTkj2 = _mm256_maskload_ps(XT_row_ptr_2, mask);
+
+        const __m256 tmp0 = _mm256_fmadd_ps(Xik0, XTkj0, XXTij);
+        const __m256 tmp1 = _mm256_fmadd_ps(Xik1, XTkj1, tmp0);
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik2, XTkj2, tmp1);
+
+        _mm256_maskstore_ps(XXT_row_ptr, mask, XXTij_new);
+      }
+    } else if (k + 1 < m) {
+      const __m256 Xik0 = _mm256_set1_ps(X[i][k]);
+      const __m256 Xik1 = _mm256_set1_ps(X[i][k + 1]);
+
+      const float *XT_row_ptr_0 = &XT[k][i + 1];
+      const float *XT_row_ptr_1 = &XT[k + 1][i + 1];
+
+      float *XXT_row_ptr = &XXT[i][i + 1];
+      size_t j_remaining = (n - (i + 1));
+
+      for (; j_remaining >= AVX_LENGTH;
+           j_remaining -= AVX_LENGTH, XT_row_ptr_0 += AVX_LENGTH,
+           XT_row_ptr_1 += AVX_LENGTH, XXT_row_ptr += AVX_LENGTH) {
+        const __m256 XXTij = _mm256_loadu_ps(XXT_row_ptr);
+
+        const __m256 XTkj0 = _mm256_loadu_ps(XT_row_ptr_0);
+        const __m256 XTkj1 = _mm256_loadu_ps(XT_row_ptr_1);
+
+        const __m256 tmp0 = _mm256_fmadd_ps(Xik0, XTkj0, XXTij);
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik1, XTkj1, tmp0);
+
+        _mm256_storeu_ps(XXT_row_ptr, XXTij_new);
+      }
+
+      if (j_remaining > 0) {
+        const __m256i mask = maskn(j_remaining);
+
+        const __m256 XXTij = _mm256_maskload_ps(XXT_row_ptr, mask);
+
+        const __m256 XTkj0 = _mm256_maskload_ps(XT_row_ptr_0, mask);
+        const __m256 XTkj1 = _mm256_maskload_ps(XT_row_ptr_1, mask);
+
+        const __m256 tmp0 = _mm256_fmadd_ps(Xik0, XTkj0, XXTij);
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik1, XTkj1, tmp0);
+
+        _mm256_maskstore_ps(XXT_row_ptr, mask, XXTij_new);
+      }
+    } else if (k < m) {
+      const __m256 Xik = _mm256_set1_ps(X[i][k]);
+
+      const float *XT_row_ptr = &XT[k][i + 1];
+
+      float *XXT_row_ptr = &XXT[i][i + 1];
+      size_t j_remaining = (n - (i + 1));
+
+      for (; j_remaining >= AVX_LENGTH; j_remaining -= AVX_LENGTH,
+                                        XT_row_ptr += AVX_LENGTH,
+                                        XXT_row_ptr += AVX_LENGTH) {
+        const __m256 XXTij = _mm256_loadu_ps(XXT_row_ptr);
+        const __m256 XTkj = _mm256_loadu_ps(XT_row_ptr);
+
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik, XTkj, XXTij);
+
+        _mm256_storeu_ps(XXT_row_ptr, XXTij_new);
+      }
+
+      if (j_remaining > 0) {
+        const __m256i mask = maskn(j_remaining);
+
+        const __m256 XXTij = _mm256_maskload_ps(XXT_row_ptr, mask);
+        const __m256 XTkj = _mm256_maskload_ps(XT_row_ptr, mask);
+
+        const __m256 XXTij_new = _mm256_fmadd_ps(Xik, XTkj, XXTij);
+
+        _mm256_maskstore_ps(XXT_row_ptr, mask, XXTij_new);
+      }
     }
   }
 }
