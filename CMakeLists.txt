@@ -18,6 +18,11 @@ target_compile_features(scalar-trick PUBLIC c_std_11)
 target_include_directories(scalar-trick PUBLIC include)
 target_link_libraries(scalar-trick PRIVATE m)
 
+add_library(scalar-transpose-trick SHARED src/scalar_transpose_trick.c)
+target_compile_features(scalar-transpose-trick PUBLIC c_std_11)
+target_include_directories(scalar-transpose-trick PUBLIC include)
+target_link_libraries(scalar-transpose-trick PRIVATE m)
+
 add_library(sse SHARED src/sse.c)
 target_compile_features(sse PUBLIC c_std_11)
 target_include_directories(sse PUBLIC include)
